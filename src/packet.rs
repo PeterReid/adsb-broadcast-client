@@ -15,7 +15,7 @@ pub struct Packet<'a> {
     pub body: &'a [u8],
 }
 
-struct DestinationIterator<'a> {
+pub struct DestinationIterator<'a> {
     body: &'a [u8]
 }
 impl <'a> Iterator for DestinationIterator<'a> {
@@ -66,6 +66,24 @@ impl <'a> Iterator for DestinationIterator<'a> {
     }
 }
 
+pub struct PayloadIterator<'a> {
+    body: &'a [u8]
+}
+impl <'a> Iterator for PayloadIterator<'a> {
+    type Item = &'a [u8];
+    
+    fn next(&mut self) -> Option<&'a [u8]> {
+        None
+    }
+}
+
+type Recipient<'a> = &'a [u8];
+
+pub enum Body<'a> {
+    Payload(PayloadIterator<'a>),
+    Configuration(Recipient<'a>, DestinationIterator<'a>),
+}
+
 impl<'a> Packet<'a> {
     pub fn parse(data: &'a [u8]) -> Option<Packet<'a>> {
         if data.len() < 32 + 8 + 1 {
@@ -94,7 +112,17 @@ impl<'a> Packet<'a> {
         })
         
     }
-    
-    
+
+    pub fn get_body(&self) -> Option<Body> {
+        match self.body[0] {
+            0 => {
+                Some(Body::Payload(PayloadIterator{body: &self.body[1..]}))
+            },
+            1 if self.body.len() >= 33 => {
+                Some(Body::Configuration(&self.body[1..33], DestinationIterator{body: &self.body[33..]}))
+            },
+            _ => None
+        }
+    }
 }
 
