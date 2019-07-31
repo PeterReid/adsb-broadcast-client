@@ -19,6 +19,7 @@ use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
 use rand::Rng;
 use std::thread::sleep;
+use std::time::Instant;
 use std::io::ErrorKind;
 
 type PublicKey = [u8; 32];
@@ -41,12 +42,12 @@ struct Client {
     public_key: PublicKey,
     
     echo_to: Vec<SocketAddr>,
-    received_packet_count: HashMap<SocketAddr, usize>,
     
+    received_packet_count: HashMap<SocketAddr, usize>,
+    last_stats_report: Option<Instant>,
     
     very_recently_received: HashMap<PacketUID, Vec<SocketAddr>>,
     semi_recently_received: HashMap<PacketUID, Vec<SocketAddr>>,
-    
     irrelevance_millis_since_epoch: u64,
     
     socket: Option<UdpSocket>,
@@ -165,6 +166,29 @@ impl Client {
         Ok( () )
     }
     
+    fn too_long_since_last_stats_report(last_stats_report: Instant) -> bool {
+        last_stats_report.duration_since(Instant::now()) > Duration::from_secs(30)
+    }
+    
+    fn build_stats_report(&self) -> Vec<u8> {
+        vec![]
+    }
+    
+    fn maybe_send_stats(&mut self) {
+        if self.last_stats_report.map(Client::too_long_since_last_stats_report).unwrap_or(true) {
+            let message = self.build_stats_report();
+            
+            if let Some(ref socket) = self.socket {
+                if let Err(e) = socket.send(&message) {
+                    eprintln!("Error sending stats report: {:?}", e);
+                } else {
+                    self.last_stats_report = Some(Instant::now());
+                    self.received_packet_count.clear();
+                }
+            }
+        }
+    }
+    
     fn new(root_hostname: String, root_public_key: PublicKey, key_seed: &[u8]) -> Client {
         let (secret_key, public_key) = ed25519::keypair(key_seed);
 
@@ -195,6 +219,8 @@ impl Client {
             irrelevance_millis_since_epoch: irrelevance_millis_since_epoch,
             
             socket: None,
+            
+            last_stats_report: None,
         
         }
     }
@@ -234,6 +260,8 @@ impl Client {
     pub fn run(&mut self) {
         loop {
             self.resolve_host();
+        
+            self.maybe_send_stats();
         
             let mut buf = [0u8; 10000];
             let (packet_len, source) = if let Some(ref socket) = self.socket {
